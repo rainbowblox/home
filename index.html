@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RainbowBlox — Home</title>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="/styles.css">
+
+  <!-- Firebase UMD (compat) - required BEFORE auth/js usage -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
+  <!-- App auth + small helpers -->
+  <script src="/auth.js" defer></script>
+  <!-- Home page logic -->
+  <script src="/home.js" defer></script>
+</head>
+<body class="rb-body">
+
+  <header class="rb-header">
+    <div class="rb-left">
+      <div class="rb-logo">🌈RainbowBlox</div>
+      <nav class="rb-nav">
+        <a href="/home/index.html" class="active">Home</a>
+        <a href="/games/index.html">Games</a>
+        <a href="/avatar/index.html">Avatar</a>
+        <a href="/groups/index.html">Groups</a>
+      </nav>
+    </div>
+
+    <div class="rb-right">
+      <div class="rb-reinbux" title="ReinBux balance">
+        <span class="rb-r">R</span>
+        <span id="reinbuxAmount">0</span>
+      </div>
+      <button id="settingsBtn" class="icon-btn" title="Settings">⚙️</button>
+      <button id="logoutBtn" class="btn btn-ghost">Log out</button>
+    </div>
+  </header>
+
+  <main class="rb-main">
+    <section class="rb-left-col">
+      <div class="avatar-card">
+        <div class="avatar-canvas" id="avatarCanvas">
+          <!-- Character image placeholder -->
+          <img id="avatarImg" src="/assets/avatar-placeholder.png" alt="avatar" />
+        </div>
+        <div class="avatar-controls">
+          <label>
+            Outfit:
+            <select id="outfitSelect">
+              <option value="default">Default</option>
+              <option value="casual">Casual</option>
+              <option value="formal">Formal</option>
+              <option value="sport">Sport</option>
+            </select>
+          </label>
+          <button id="applyOutfit" class="btn btn-primary">Apply</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="rb-right-col">
+      <div class="welcome-row">
+        <h1 id="welcomeHello">Hello, <span id="displayName">Player</span></h1>
+        <div class="mini-stats">
+          <div class="friends">Friends (<span id="friendsCount">0</span>)</div>
+          <div class="recent-plays-link"><a href="#recentPlays">Continue Playing</a></div>
+        </div>
+      </div>
+
+      <div class="recent-plays" id="recentPlays">
+        <h2>Continue Playing</h2>
+        <div id="recentGrid" class="grid-tiles">
+          <!-- Tiles will be injected here (max 10) -->
+        </div>
+        <div id="recentFallback" class="muted">Loading...</div>
+      </div>
+
+      <div class="user-settings">
+        <h3>Account</h3>
+        <ul>
+          <li><strong>Username:</strong> <span id="usernameField">—</span></li>
+          <li><strong>Email:</strong> <span id="emailField">—</span></li>
+          <li><strong>Birthday:</strong> <span id="birthdayField">—</span></li>
+          <li><strong>Location:</strong> <span id="locationField">—</span></li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="rb-footer">
+    <small>© <span id="yearFooter"></span> RainbowBlox</small>
+  </footer>
+
+  <!-- small inline UI debug for mobile - hidden normally -->
+  <div id="rbToast" class="rb-toast" aria-hidden="true"></div>
+
+</body>
+</html>
