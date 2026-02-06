@@ -1,6 +1,4 @@
-// home.js
-// Requires: firebase compat loaded and auth.js executed (makes window.RB_AUTH available)
-
+// home.js — updated to wait for auth initialization reliably
 (async function(){
   function toast(msg, time=2500){
     const el = document.getElementById('rbToast');
@@ -10,7 +8,6 @@
     setTimeout(()=> el.classList.remove('show'), time);
   }
 
-  // simple safe helpers
   function formatDate(ts){
     try {
       const d = ts instanceof firebase.firestore.Timestamp ? ts.toDate() : new Date(ts);
@@ -18,32 +15,41 @@
     } catch(e){ return '-'; }
   }
 
-  // wait until RB_AUTH ready
   if (!window.RB_AUTH) {
     console.error('RB_AUTH missing');
     toast('Backend not ready');
     return;
   }
-  const { auth, db, getLocalRbUser } = window.RB_AUTH;
+  const { auth, db, getLocalRbUser, ensureAuthOrRedirect, getCurrentUserContext } = window.RB_AUTH;
 
-  // determine user id doc: try Firebase uid then local
+  // wait safely for auth or legacy local session; will redirect to login if none
+  const ctx = await ensureAuthOrRedirect({ timeoutMs: 6000 });
+  if (!ctx) { /* ensureAuthOrRedirect already redirected */ return; }
+
+  // Now determine docId and userDoc similarly but using getCurrentUserContext as source of truth
   let docId = null;
   let userDoc = null;
+
   async function loadUserDoc() {
-    // 1) if firebase user:
-    const fbUser = auth.currentUser;
-    if (fbUser) {
-      // first try doc by uid
-      let snap = await db.collection('users').doc(fbUser.uid).get();
-      if (snap.exists) {
-        docId = snap.id;
-        userDoc = snap.data();
+    const current = getCurrentUserContext();
+    if (!current) {
+      location.href = '/0/index.html';
+      return;
+    }
+
+    // If firebase user
+    if (current.authType === 'firebase') {
+      // try doc by uid
+      const byUid = await db.collection('users').doc(current.uid).get().catch(()=>null);
+      if (byUid && byUid.exists) {
+        docId = byUid.id;
+        userDoc = byUid.data();
         return;
       }
-      // else try query by Username == displayName
-      if (fbUser.displayName) {
-        const q = await db.collection('users').where('Username','==', fbUser.displayName).limit(1).get();
-        if (!q.empty) {
+      // else try by Username == displayName
+      if (current.displayName) {
+        const q = await db.collection('users').where('Username','==', current.displayName).limit(1).get().catch(()=>null);
+        if (q && !q.empty) {
           docId = q.docs[0].id;
           userDoc = q.docs[0].data();
           return;
@@ -51,7 +57,7 @@
       }
     }
 
-    // 2) fallback to localStorage rb_user
+    // If legacy local
     const local = getLocalRbUser();
     if (local && local.id) {
       const snap = await db.collection('users').doc(local.id).get().catch(()=>null);
@@ -60,7 +66,6 @@
         userDoc = snap.data();
         return;
       } else {
-        // if no Firestore doc (local-only), build shallow doc from local
         docId = local.id;
         userDoc = {
           Display_Name: local.displayName || local.id,
@@ -74,7 +79,7 @@
       }
     }
 
-    // 3) last resort: if no doc, redirect to login
+    // if nothing found — redirect
     location.href = '/0/index.html';
   }
 
