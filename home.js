@@ -1,8 +1,12 @@
-// home.js — updated to wait for auth initialization reliably
+// home.js — fixed to match your auth.js and avoid false redirects
 (async function(){
   function toast(msg, time=2500){
     const el = document.getElementById('rbToast');
-    if(!el) return;
+    if(!el) {
+      // fallback: use mobileLog if toast missing
+      try { window.mobileLog && window.mobileLog(msg); } catch(e){}
+      return;
+    }
     el.textContent = msg;
     el.classList.add('show');
     setTimeout(()=> el.classList.remove('show'), time);
@@ -10,8 +14,8 @@
 
   function formatDate(ts){
     try {
-      const d = ts instanceof firebase.firestore.Timestamp ? ts.toDate() : new Date(ts);
-      return d.toLocaleDateString();
+      const d = ts && ts.toDate ? ts.toDate() : new Date(ts);
+      return d && d.toLocaleDateString ? d.toLocaleDateString() : '-';
     } catch(e){ return '-'; }
   }
 
@@ -20,44 +24,72 @@
     toast('Backend not ready');
     return;
   }
+
+  // destructure available helpers from auth
   const { auth, db, getLocalRbUser, ensureAuthOrRedirect, getCurrentUserContext } = window.RB_AUTH;
 
-  // wait safely for auth or legacy local session; will redirect to login if none
-  const ctx = await ensureAuthOrRedirect({ timeoutMs: 6000 });
-  if (!ctx) { /* ensureAuthOrRedirect already redirected */ return; }
+  // Wait for auth/local session (ensureAuthOrRedirect will redirect if none)
+  const ctx = await ensureAuthOrRedirect(6000);
+  if (!ctx) return; // ensureAuthOrRedirect already redirected
 
-  // Now determine docId and userDoc similarly but using getCurrentUserContext as source of truth
+  // Determine docId and userDoc in a robust way
   let docId = null;
   let userDoc = null;
 
   async function loadUserDoc() {
-    const current = getCurrentUserContext();
+    // Use the canonical helper that returns either firebase or local context
+    const current = getCurrentUserContext ? getCurrentUserContext() : null;
+
+    // If nothing -> redirect (guard)
     if (!current) {
       location.href = '/0/index.html';
       return;
     }
 
-    // If firebase user
+    // If authType is firebase: try multiple strategies:
     if (current.authType === 'firebase') {
-      // try doc by uid
-      const byUid = await db.collection('users').doc(current.uid).get().catch(()=>null);
-      if (byUid && byUid.exists) {
-        docId = byUid.id;
-        userDoc = byUid.data();
-        return;
+      // 1) try doc by current.id (this is uid if auth)
+      if (current.id) {
+        try {
+          const byUid = await db.collection('users').doc(current.id).get().catch(()=>null);
+          if (byUid && byUid.exists) {
+            docId = byUid.id;
+            userDoc = byUid.data();
+            return;
+          }
+        } catch(e){}
       }
-      // else try by Username == displayName
+
+      // 2) try by Username == displayName (common when you write doc under username)
       if (current.displayName) {
-        const q = await db.collection('users').where('Username','==', current.displayName).limit(1).get().catch(()=>null);
-        if (q && !q.empty) {
-          docId = q.docs[0].id;
-          userDoc = q.docs[0].data();
-          return;
-        }
+        try {
+          const q = await db.collection('users')
+                          .where('Username','==', current.displayName)
+                          .limit(1).get().catch(()=>null);
+          if (q && !q.empty) {
+            docId = q.docs[0].id;
+            userDoc = q.docs[0].data();
+            return;
+          }
+        } catch(e){}
+      }
+
+      // 3) fallback: maybe there is a local rb_user that maps to a username doc
+      const local = getLocalRbUser();
+      if (local && local.id) {
+        try {
+          // local.id may be username or uid; try both
+          const s = await db.collection('users').doc(local.id).get().catch(()=>null);
+          if (s && s.exists) {
+            docId = s.id;
+            userDoc = s.data();
+            return;
+          }
+        } catch(e){}
       }
     }
 
-    // If legacy local
+    // If legacy local session: load by local.id (username)
     const local = getLocalRbUser();
     if (local && local.id) {
       const snap = await db.collection('users').doc(local.id).get().catch(()=>null);
@@ -66,6 +98,7 @@
         userDoc = snap.data();
         return;
       } else {
+        // local-only fallback doc
         docId = local.id;
         userDoc = {
           Display_Name: local.displayName || local.id,
@@ -79,11 +112,14 @@
       }
     }
 
-    // if nothing found — redirect
+    // nothing found -> redirect to login
     location.href = '/0/index.html';
   }
 
   await loadUserDoc();
+
+  // If still no doc, bail (redirect likely already happened)
+  if (!docId || !userDoc) return;
 
   // populate UI with profile
   const displayNameEl = document.getElementById('displayName');
@@ -102,23 +138,23 @@
   if (birthdayEl) birthdayEl.textContent = userDoc.Birthday ? formatDate(userDoc.Birthday) : '—';
   if (locationEl) locationEl.textContent = userDoc.Location || '—';
   if (reinEl) reinEl.textContent = userDoc.ReinBux || '0';
-  if (friendsEl) friendsEl.textContent = '0';
+  if (friendsEl) friendsEl.textContent = (typeof userDoc.FriendsCount !== 'undefined') ? String(userDoc.FriendsCount) : '0';
 
-  // Avatar simple outfit switch (swap image src or CSS classes)
+  // Avatar outfit switch
   const outfitSelect = document.getElementById('outfitSelect');
   const applyOutfit = document.getElementById('applyOutfit');
   const avatarImg = document.getElementById('avatarImg');
 
   function applySelectedOutfit() {
-    const v = outfitSelect.value;
-    // For demo: change src depending on selection (placeholders)
-    // Make sure you have these assets or use generic colored SVGs
-    if (v === 'default') avatarImg.src = '/assets/avatar-placeholder.png';
-    else if (v === 'casual') avatarImg.src = '/assets/avatar-casual.png';
-    else if (v === 'formal') avatarImg.src = '/assets/avatar-formal.png';
-    else if (v === 'sport') avatarImg.src = '/assets/avatar-sport.png';
-    else avatarImg.src = '/assets/avatar-placeholder.png';
+    const v = outfitSelect ? outfitSelect.value : 'default';
+    if (!avatarImg) return;
+    if (v === 'default') avatarImg.src = 'assets/avatar-placeholder.png';
+    else if (v === 'casual') avatarImg.src = 'assets/avatar-casual.png';
+    else if (v === 'formal') avatarImg.src = 'assets/avatar-formal.png';
+    else if (v === 'sport') avatarImg.src = 'assets/avatar-sport.png';
+    else avatarImg.src = 'assets/avatar-placeholder.png';
     toast('Outfit applied');
+    // optional: you can write the outfit selection into Firestore here
   }
 
   if (applyOutfit) applyOutfit.addEventListener('click', applySelectedOutfit);
@@ -127,10 +163,7 @@
   const logoutBtn = document.getElementById('logoutBtn');
   if (logoutBtn) logoutBtn.addEventListener('click', async () => {
     try {
-      // sign out firebase if present
-      if (auth && auth.currentUser) {
-        try { await auth.signOut(); } catch(e){}
-      }
+      try { if (auth && auth.signOut) await auth.signOut(); } catch(e){}
       localStorage.removeItem('rb_user');
       location.href = '/0/index.html';
     } catch(e) {
@@ -138,16 +171,13 @@
     }
   });
 
-  // Load recent plays:
-  // Strategy:
-  // 1) try subcollection users/{docId}/recentPlays ordered by 'lastPlayed' desc limit 10
-  // 2) fallback: check userDoc.RecentPlays array field (if present)
+  // Load recent plays
   async function loadRecentPlays() {
+    if (!recentGrid || !recentFallback) return;
     recentGrid.innerHTML = '';
     recentFallback.textContent = 'Loading...';
 
     try {
-      // try subcollection
       const colRef = db.collection('users').doc(docId).collection('recentPlays');
       const snap = await colRef.orderBy('lastPlayed','desc').limit(10).get().catch(()=>null);
       if (snap && !snap.empty) {
@@ -157,14 +187,12 @@
         return;
       }
 
-      // fallback to array field
-      if (userDoc && userDoc.RecentPlays && Array.isArray(userDoc.RecentPlays) && userDoc.RecentPlays.length>0) {
+      if (userDoc && Array.isArray(userDoc.RecentPlays) && userDoc.RecentPlays.length>0) {
         renderRecent(userDoc.RecentPlays.slice(0,10));
         recentFallback.style.display = 'none';
         return;
       }
 
-      // nothing found
       recentFallback.textContent = 'Nothing found';
     } catch(e){
       console.error(e);
@@ -173,6 +201,7 @@
   }
 
   function renderRecent(items) {
+    if (!recentGrid) return;
     recentGrid.innerHTML = '';
     if (!items || items.length===0) {
       recentFallback.textContent = 'Nothing found';
@@ -184,7 +213,7 @@
       tile.className = 'tile';
       const img = document.createElement('img');
       img.alt = (it.name||'Game') + ' image';
-      img.src = it.iconURL || '/assets/game-placeholder.png';
+      img.src = it.iconURL || 'assets/game-placeholder.png';
       const title = document.createElement('div');
       title.className = 'gtitle';
       title.textContent = it.name || 'Untitled';
@@ -202,11 +231,11 @@
 
   await loadRecentPlays();
 
-  // small UI polish: set year footer
+  // year footer
   const yearEl = document.getElementById('yearFooter');
   if (yearEl) yearEl.textContent = new Date().getFullYear();
 
-  // settings button (placeholder)
+  // settings button placeholder
   const settingsBtn = document.getElementById('settingsBtn');
   if (settingsBtn) settingsBtn.addEventListener('click', ()=> toast('Settings will open here'));
 
